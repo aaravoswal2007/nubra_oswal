@@ -6,11 +6,11 @@ Per Nubra docs: data is received through on_market_data; orderbook subscription 
 """
 
 import os
-import csv
 import certifi
-import json
 import time
+import logging
 from pathlib import Path
+from datetime import datetime
 
 # Fix SSL certificate issues on macOS
 os.environ['SSL_CERT_FILE'] = certifi.where()
@@ -19,40 +19,45 @@ os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 from nubra_python_sdk.ticker import websocketdata
 from nubra_client import ensure_nubra
 
-# ----- In-memory market_data (Oswal-compatible structure) -----
-# Same key_name and field layout as Oswal_trading_frontend/.../marketdata_store.market_data
-market_data = {}
+# ===== Import local marketdata_store =====
+import marketdata_store
+
+# ===== Import instruments from instruments_to_sub =====
+from instruments_to_sub import instruments_to_subscribe, instrument_dict
+
+# ===== Setup logging =====
+# Create logs directory if it doesn't exist
+LOG_DIR = Path(__file__).resolve().parent / "logs"
+LOG_DIR.mkdir(exist_ok=True)
+
+# Daily log file (similar to XTS structure)
+def daily_log(prefix):
+    """Generate daily log file path."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    return str(LOG_DIR / f"{prefix}_{today}.log")
+
+logging.basicConfig(
+    filename=daily_log("marketdata_nubra"),
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+log = logging.getLogger("marketdata_nubra")
+
+# ===== Use marketdata_store.market_data =====
+market_data = marketdata_store.market_data
+log.info("Using marketdata_store.market_data")
 
 # ref_id (int) -> key_name (str), e.g. 1069800 -> "ADANIGREEN_920_CE"
+# Built from instrument_dict (reverse mapping)
 ref_id_to_key_name = {}
 
 # Target key_name for optional console print (parity with existing app logging)
-TARGET_KEY_PRINT = "ADANIGREEN_920_CE"
+# Will be set to first instrument or can be configured
+TARGET_KEY_PRINT = None
 
 _message_count = 0
 _connect_count = 0
 _tick_count = 0
-
-
-def _load_ref_id_to_key_name(csv_path: str) -> dict:
-    """Build ref_id -> key_name from option_ref_ids_feb_filtered_by_strikes.csv.
-    key_name = f'{asset}_{strike_price//100}_{option_type}' (e.g. ADANIENT_2000_CE).
-    """
-    mapping = {}
-    path = Path(__file__).resolve().parent / csv_path
-    with open(path, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            try:
-                ref_id = int(row["ref_id"])
-                asset = (row.get("asset") or "").strip()
-                strike_price = int(row.get("strike_price") or 0)
-                option_type = (row.get("option_type") or "").strip()
-                key_name = f"{asset}_{strike_price // 100}_{option_type}"
-                mapping[ref_id] = key_name
-            except (ValueError, KeyError):
-                continue
-    return mapping
 
 
 def _orderbook_to_oswal_tick(msg) -> dict | None:
@@ -113,60 +118,44 @@ def _orderbook_to_oswal_tick(msg) -> dict | None:
 def on_orderbook_data(msg):
     """Process every OrderBookWrapper: resolve key_name, write Oswal-format tick to market_data."""
     global _tick_count
-    incoming_ref_id = getattr(msg, "ref_id", None)
-    if incoming_ref_id is None:
-        return
-    # DEBUG: see all orderbook ref_ids coming in
-    print(f"[DEBUG] on_orderbook_data: ref_id={incoming_ref_id}", flush=True)
+    try:
+        incoming_ref_id = getattr(msg, "ref_id", None)
+        if incoming_ref_id is None:
+            return
 
-    entry = _orderbook_to_oswal_tick(msg)
-    if entry is None:
-        # DEBUG: ref_id not in mapping or could not convert
-        print(f"[DEBUG] skipped ref_id={incoming_ref_id} (no mapping or bad tick)", flush=True)
-        return
-    key_name = ref_id_to_key_name.get(int(incoming_ref_id))
-    if not key_name:
-        # DEBUG: mapping missing for this ref_id
-        print(f"[DEBUG] no key_name for ref_id={incoming_ref_id}", flush=True)
-        return
-    market_data[key_name] = entry
-    _tick_count += 1
+        entry = _orderbook_to_oswal_tick(msg)
+        if entry is None:
+            # ref_id not in mapping or could not convert
+            log.debug(f"Skipped ref_id={incoming_ref_id} (no mapping or bad tick)")
+            return
+        
+        key_name = ref_id_to_key_name.get(int(incoming_ref_id))
+        if not key_name:
+            # mapping missing for this ref_id
+            log.debug(f"No key_name for ref_id={incoming_ref_id}")
+            return
+        
+        # Update shared market_data (same as XTS implementation)
+        market_data[key_name] = entry
+        _tick_count += 1
 
-    # DEBUG: occasionally dump one sample entry
-    if _tick_count % 50 == 0:
-        try:
-            sample_key = next(iter(market_data))
-            print(f"[DEBUG] market_data size={len(market_data)} sample_key={sample_key}", flush=True)
-            print(f"[DEBUG] market_data[{sample_key}]={market_data[sample_key]}", flush=True)
-        except StopIteration:
-            pass
-
-    # Optional: print for TARGET_KEY_PRINT (parity with existing app)
-    if key_name == TARGET_KEY_PRINT:
-        def _parse_price(px_sz_str):
-            if px_sz_str == "N/A":
-                return "N/A"
-            try:
-                return px_sz_str.split("|")[0]
-            except Exception:
-                return px_sz_str
-        bb1 = _parse_price(entry["Best bid 1"])
-        bb2 = _parse_price(entry["Best bid 2"])
-        ba1 = _parse_price(entry["Best ask 1"])
-        ba2 = _parse_price(entry["Best ask 2"])
-        print(f"[{TARGET_KEY_PRINT}] bb1={bb1} bb2={bb2} ba1={ba1} ba2={ba2}", flush=True)
+    except Exception as e:
+        log.error(f"Error updating market data: {e}")
 
 def on_connect(msg):
-    """Connection callback - doc: print('[status]', msg). De-duplicate repeated connects (reconnects)."""
+    """Connection callback - log connection status."""
     global _connect_count
     _connect_count += 1
     if _connect_count == 1:
+        log.info(f"✅ Connected: {msg}")
+        log.info("WebSocket ready. You can subscribe to data streams.")
         print(f"[Status] ✅ Connected: {msg}", flush=True)
-        print("[Status] WebSocket ready. You can subscribe to data streams.", flush=True)
     else:
+        log.info(f"Reconnected (#{_connect_count}): {msg}")
         print(f"[Status] Reconnected (#{_connect_count}): {msg}", flush=True)
 
 def on_close(reason):
+    log.info(f"Connection closed: {reason}")
     print(f"[Status] Closed: {reason}", flush=True)
 
 def on_market_data(msg):
@@ -182,10 +171,13 @@ def on_market_data(msg):
 
 def on_error(err):
     error_str = str(err)
+    log.error(f"❌ {err}")
     print(f"\n[Error] ❌ {err}", flush=True)
     if "subscription" in error_str.lower():
+        log.warning("⚠️  Subscription-related error detected!")
         print(f"[Error] ⚠️  Subscription-related error detected!", flush=True)
     if "SSL" in error_str or "certificate" in error_str.lower():
+        log.error("⚠️  SSL Certificate Error Detected!")
         print("\n⚠️  SSL Certificate Error Detected!", flush=True)
         print("Try running:", flush=True)
         print("  export SSL_CERT_FILE=$(python3 -c 'import certifi; print(certifi.where())')", flush=True)
@@ -194,31 +186,50 @@ def on_error(err):
         print("See SSL_FIX.md for more details.\n", flush=True)
 
 def main():
-    # Load ref_id -> key_name mapping from CSV
-    global ref_id_to_key_name
-    ref_id_to_key_name = _load_ref_id_to_key_name("option_ref_ids_feb_filtered_by_strikes.csv")
-    print(f"Loaded ref_id->key_name mapping: {len(ref_id_to_key_name)} instruments")
+    log.info("Starting Nubra market data subscription")
+    
+    # Build ref_id -> key_name mapping from instrument_dict (reverse mapping)
+    global ref_id_to_key_name, TARGET_KEY_PRINT
+    # instrument_dict values are ref_ids (may be int or str), convert to int for mapping
+    ref_id_to_key_name = {int(ref_id): key_name for key_name, ref_id in instrument_dict.items()}
+    
+    # Check: subscription list should cover all instruments in instrument_dict
+    dict_ref_ids = {str(ref_id) for ref_id in instrument_dict.values()}
+    sub_ref_ids = set(instruments_to_subscribe)
+    if dict_ref_ids != sub_ref_ids:
+        missing_in_sub = dict_ref_ids - sub_ref_ids
+        extra_in_sub = sub_ref_ids - dict_ref_ids
+        if missing_in_sub:
+            log.warning(f"instrument_dict has ref_ids not in instruments_to_subscribe: {len(missing_in_sub)}")
+            print(f"[Check] WARNING: {len(missing_in_sub)} ref_ids in instrument_dict are NOT in subscription list", flush=True)
+        if extra_in_sub:
+            log.warning(f"instruments_to_subscribe has ref_ids not in instrument_dict: {len(extra_in_sub)}")
+            print(f"[Check] WARNING: {len(extra_in_sub)} ref_ids in subscription list are NOT in instrument_dict", flush=True)
+    else:
+        log.info("Subscription list matches instrument_dict (all instruments covered)")
+        print(f"[Check] OK: Subscription list matches instrument_dict ({len(dict_ref_ids)} instruments)", flush=True)
+    
+    # Set TARGET_KEY_PRINT to first instrument if not set
+    if TARGET_KEY_PRINT is None and instrument_dict:
+        TARGET_KEY_PRINT = list(instrument_dict.keys())[0]
+    
+    log.info(f"Loaded ref_id->key_name mapping: {len(ref_id_to_key_name)} instruments from instrument_dict")
+    print(f"Loaded {len(ref_id_to_key_name)} instruments from instrument_dict")
+    print(f"Total instruments to subscribe: {len(instruments_to_subscribe)}")
+    
+    # instruments_to_subscribe is already a list of strings (ref_ids)
+    ref_ids_str = instruments_to_subscribe
 
-    # Load ref_ids from JSON
-    ref_ids_path = Path(__file__).resolve().parent / "ref_ids_list.json"
-    with open(ref_ids_path, "r") as f:
-        ref_ids = json.load(f)
-
-    # Convert to strings for subscription
-    ref_ids_str = [str(ref_id) for ref_id in ref_ids]
-
-    print(f"Loaded {len(ref_ids_str)} ref_ids from ref_ids_list.json")
-    print(f"Subscribing to whole list; printing ticks for key: {TARGET_KEY_PRINT}")
+    print(f"Subscribing to {len(ref_ids_str)} instruments")
     print("-" * 80)
     
     # Initialize SDK (UAT vs PROD from .env NUBRA_ENV)
     nubra = ensure_nubra()
     
-    # Initialize WebSocket
+    # Initialize WebSocket — use on_orderbook_data only for orderbook ticks
     socket = websocketdata.NubraDataSocket(
         client=nubra,
         on_orderbook_data=on_orderbook_data,
-        on_market_data=on_market_data,  # Also catch all market data
         on_connect=on_connect,
         on_close=on_close,
         on_error=on_error
@@ -240,12 +251,11 @@ def main():
     # Subscribe to orderbook data for whole list
     # Note: subscribe expects a list of strings
     print(f"\n[Subscription] Subscribing to whole list ({len(ref_ids_str)} ref_ids)...", flush=True)
-    print(f"[Subscription] Target key (will print): {TARGET_KEY_PRINT}", flush=True)
     
     try:
         print(f"\n[Subscription] Calling socket.subscribe()...", flush=True)
         print(f"[Subscription] Parameters:", flush=True)
-        print(f"  - symbols: {len(ref_ids_str)} ref_ids (from ref_ids_list.json)", flush=True)
+        print(f"  - symbols: {len(ref_ids_str)} ref_ids (from instruments_to_subscribe)", flush=True)
         print(f"  - data_type: 'orderbook'", flush=True)
         print(f"  - socket.connected: {socket.connected}", flush=True)
         
@@ -275,12 +285,13 @@ def main():
         print(f"[Subscription] If no data appears, the instruments may not be actively trading.\n", flush=True)
         
     except Exception as e:
+        log.error(f"❌ ERROR during subscription: {e}", exc_info=True)
         print(f"\n[Subscription] ❌ ERROR during subscription: {e}", flush=True)
         import traceback
         print(f"[Subscription] Traceback:", flush=True)
         traceback.print_exc()
 
-    print(f"\nSubscribed! Updating market_data for all instruments; printing ticks for {TARGET_KEY_PRINT}.")
+    print(f"\n✅ Subscribed! Updating market_data for all {len(ref_ids_str)} instruments")
     print("Press Ctrl+C to stop")
     
     # Keep running - this blocks and processes incoming messages
