@@ -61,9 +61,7 @@ def place_order_nubra(
     if price_type_val == "LIMIT":
         order_price = float(price_rupees)
         # Round to nearest tick_size (tick_size from CSV is in paise, convert to rupees)
-        from instrument_dict_nubra import load_tick_size_map
-        tick_size_map = load_tick_size_map()
-        tick_size_paise = tick_size_map.get(int(ref_id), 5)  # default 5 paise
+        tick_size_paise = 5  # default 5 paise
         # tick_size_rupees = tick_size_paise / 100  # convert to rupees
         order_price = round(order_price / tick_size_paise) * tick_size_paise
     else:
