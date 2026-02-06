@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """
-Subscribe to orderbook data for whole ref_ids list; print only target ref_id.
+Subscribe to orderbook data for whole ref_ids list; update in-memory market_data
+in Oswal key_name format and field structure (compatible with marketdata_store / executor_live).
 Per Nubra docs: data is received through on_market_data; orderbook subscription filters it.
 """
 
 import os
+import csv
 import certifi
 import json
 import time
+from pathlib import Path
 
 # Fix SSL certificate issues on macOS
 os.environ['SSL_CERT_FILE'] = certifi.where()
@@ -16,36 +19,142 @@ os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 from nubra_python_sdk.ticker import websocketdata
 from nubra_python_sdk.start_sdk import InitNubraSdk, NubraEnv
 
-# Target ref_id: only this one will be printed (OrderBookWrapper)
-TARGET_REF_ID = 1069800
+# ----- In-memory market_data (Oswal-compatible structure) -----
+# Same key_name and field layout as Oswal_trading_frontend/.../marketdata_store.market_data
+market_data = {}
+
+# ref_id (int) -> key_name (str), e.g. 1069800 -> "ADANIGREEN_920_CE"
+ref_id_to_key_name = {}
+
+# Target key_name for optional console print (parity with existing app logging)
+TARGET_KEY_PRINT = "ADANIGREEN_920_CE"
 
 _message_count = 0
 _connect_count = 0
 _tick_count = 0
 
-def _print_orderbook_wrapper(msg):
-    """Print only best bid 1 & 2 and best ask 1 & 2 prices (divided by 100)."""
-    global _tick_count
-    _tick_count += 1
-    bids = getattr(msg, 'bids', [])
-    asks = getattr(msg, 'asks', [])
-    def p(x):
-        return round(x / 100, 2) if x is not None else None
-    print("\n[Tick #{}] [Orderbook] ref_id={}".format(_tick_count, getattr(msg, 'ref_id', None)), flush=True)
-    print("  best_bid_1: {}".format(p(bids[0].price) if len(bids) > 0 else None), flush=True)
-    print("  best_bid_2: {}".format(p(bids[1].price) if len(bids) > 1 else None), flush=True)
-    print("  best_ask_1: {}".format(p(asks[0].price) if len(asks) > 0 else None), flush=True)
-    print("  best_ask_2: {}".format(p(asks[1].price) if len(asks) > 1 else None), flush=True)
-    print("-" * 50, flush=True)
+
+def _load_ref_id_to_key_name(csv_path: str) -> dict:
+    """Build ref_id -> key_name from option_ref_ids_feb_filtered_by_strikes.csv.
+    key_name = f'{asset}_{strike_price//100}_{option_type}' (e.g. ADANIENT_2000_CE).
+    """
+    mapping = {}
+    path = Path(__file__).resolve().parent / csv_path
+    with open(path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                ref_id = int(row["ref_id"])
+                asset = (row.get("asset") or "").strip()
+                strike_price = int(row.get("strike_price") or 0)
+                option_type = (row.get("option_type") or "").strip()
+                key_name = f"{asset}_{strike_price // 100}_{option_type}"
+                mapping[ref_id] = key_name
+            except (ValueError, KeyError):
+                continue
+    return mapping
+
+
+def _orderbook_to_oswal_tick(msg) -> dict | None:
+    """Convert Nubra OrderBookWrapper to one Oswal-style market_data entry (value dict)."""
+    ref_id = getattr(msg, "ref_id", None)
+    if ref_id is None:
+        return None
+    ref_id = int(ref_id)
+    key_name = ref_id_to_key_name.get(ref_id)
+    if not key_name:
+        return None
+
+    bids = getattr(msg, "bids", [])
+    asks = getattr(msg, "asks", [])
+
+    def _level_px_sz(levels, i):
+        if i >= len(levels):
+            return "N/A"
+        level = levels[i]
+        price = getattr(level, "price", None)
+        size = getattr(level, "size", getattr(level, "quantity", getattr(level, "qty", 0)))
+        if price is None:
+            return "N/A"
+        px = round(price / 100, 2) if price is not None else 0
+        return f"{px}|{size}"
+
+    best_bid_1 = _level_px_sz(bids, 0)
+    best_bid_2 = _level_px_sz(bids, 1)
+    best_ask_1 = _level_px_sz(asks, 0)
+    best_ask_2 = _level_px_sz(asks, 1)
+
+    ltp = getattr(msg, "last_traded_price", getattr(msg, "ltp", None))
+    if ltp is not None and isinstance(ltp, (int, float)):
+        ltp = round(ltp / 100, 2) if ltp else "N/A"
+    ltp = ltp if ltp is not None else "N/A"
+
+    ltq = getattr(msg, "last_traded_quantity", getattr(msg, "ltq", getattr(msg, "last_traded_qty", 0)))
+    cum = getattr(msg, "total_traded_quantity", getattr(msg, "cum_vol", None))
+    seq = getattr(msg, "sequence_number", getattr(msg, "seq", None))
+    ts = getattr(msg, "exchange_timestamp", getattr(msg, "timestamp", None))
+    ltt = getattr(msg, "last_traded_time", None)
+
+    return {
+        "ltp": ltp,
+        "ltq": ltq,
+        "cum_vol": cum,
+        "seq": seq,
+        "Best bid 1": best_bid_1,
+        "Best bid 2": best_bid_2,
+        "Best ask 1": best_ask_1,
+        "Best ask 2": best_ask_2,
+        "timestamp": ts,
+        "last_trade_time": ltt,
+        "inst_id": ref_id,
+    }
+
 
 def on_orderbook_data(msg):
-    """Callback for orderbook data - print OrderBookWrapper only for TARGET_REF_ID."""
-    incoming_ref_id = getattr(msg, 'ref_id', None)
+    """Process every OrderBookWrapper: resolve key_name, write Oswal-format tick to market_data."""
+    global _tick_count
+    incoming_ref_id = getattr(msg, "ref_id", None)
     if incoming_ref_id is None:
         return
-    if int(incoming_ref_id) != TARGET_REF_ID:
+    # DEBUG: see all orderbook ref_ids coming in
+    print(f"[DEBUG] on_orderbook_data: ref_id={incoming_ref_id}", flush=True)
+
+    entry = _orderbook_to_oswal_tick(msg)
+    if entry is None:
+        # DEBUG: ref_id not in mapping or could not convert
+        print(f"[DEBUG] skipped ref_id={incoming_ref_id} (no mapping or bad tick)", flush=True)
         return
-    _print_orderbook_wrapper(msg)
+    key_name = ref_id_to_key_name.get(int(incoming_ref_id))
+    if not key_name:
+        # DEBUG: mapping missing for this ref_id
+        print(f"[DEBUG] no key_name for ref_id={incoming_ref_id}", flush=True)
+        return
+    market_data[key_name] = entry
+    _tick_count += 1
+
+    # DEBUG: occasionally dump one sample entry
+    if _tick_count % 50 == 0:
+        try:
+            sample_key = next(iter(market_data))
+            print(f"[DEBUG] market_data size={len(market_data)} sample_key={sample_key}", flush=True)
+            print(f"[DEBUG] market_data[{sample_key}]={market_data[sample_key]}", flush=True)
+        except StopIteration:
+            pass
+
+    # Optional: print for TARGET_KEY_PRINT (parity with existing app)
+    if key_name == TARGET_KEY_PRINT:
+        def _parse_price(px_sz_str):
+            if px_sz_str == "N/A":
+                return "N/A"
+            try:
+                return px_sz_str.split("|")[0]
+            except Exception:
+                return px_sz_str
+        bb1 = _parse_price(entry["Best bid 1"])
+        bb2 = _parse_price(entry["Best bid 2"])
+        ba1 = _parse_price(entry["Best ask 1"])
+        ba2 = _parse_price(entry["Best ask 2"])
+        print(f"[{TARGET_KEY_PRINT}] bb1={bb1} bb2={bb2} ba1={ba1} ba2={ba2}", flush=True)
 
 def on_connect(msg):
     """Connection callback - doc: print('[status]', msg). De-duplicate repeated connects (reconnects)."""
@@ -85,19 +194,25 @@ def on_error(err):
         print("See SSL_FIX.md for more details.\n", flush=True)
 
 def main():
+    # Load ref_id -> key_name mapping from CSV
+    global ref_id_to_key_name
+    ref_id_to_key_name = _load_ref_id_to_key_name("option_ref_ids_feb_filtered_by_strikes.csv")
+    print(f"Loaded ref_id->key_name mapping: {len(ref_id_to_key_name)} instruments")
+
     # Load ref_ids from JSON
-    with open("ref_ids_list.json", "r") as f:
+    ref_ids_path = Path(__file__).resolve().parent / "ref_ids_list.json"
+    with open(ref_ids_path, "r") as f:
         ref_ids = json.load(f)
-    
+
     # Convert to strings for subscription
     ref_ids_str = [str(ref_id) for ref_id in ref_ids]
-    
+
     print(f"Loaded {len(ref_ids_str)} ref_ids from ref_ids_list.json")
-    print(f"Subscribing to whole list; printing only ref_id: {TARGET_REF_ID}")
+    print(f"Subscribing to whole list; printing ticks for key: {TARGET_KEY_PRINT}")
     print("-" * 80)
     
     # Initialize SDK
-    nubra = InitNubraSdk(NubraEnv.PROD)  # or NubraEnv.PROD, env_creds=True
+    nubra = InitNubraSdk(NubraEnv.PROD)  # or NubraEnv.UAT for testing
     
     # Initialize WebSocket
     socket = websocketdata.NubraDataSocket(
@@ -125,7 +240,7 @@ def main():
     # Subscribe to orderbook data for whole list
     # Note: subscribe expects a list of strings
     print(f"\n[Subscription] Subscribing to whole list ({len(ref_ids_str)} ref_ids)...", flush=True)
-    print(f"[Subscription] Target ref_id (will print): {TARGET_REF_ID}", flush=True)
+    print(f"[Subscription] Target key (will print): {TARGET_KEY_PRINT}", flush=True)
     
     try:
         print(f"\n[Subscription] Calling socket.subscribe()...", flush=True)
@@ -165,9 +280,8 @@ def main():
         print(f"[Subscription] Traceback:", flush=True)
         traceback.print_exc()
 
-    print(f"\nSubscribed! Waiting for orderbook ticks for ref_id {TARGET_REF_ID}...")
+    print(f"\nSubscribed! Updating market_data for all instruments; printing ticks for {TARGET_KEY_PRINT}.")
     print("Press Ctrl+C to stop")
-    print("[Response: OrderBookWrapper for ref_id {} only]\n".format(TARGET_REF_ID))
     
     # Keep running - this blocks and processes incoming messages
     try:

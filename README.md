@@ -45,21 +45,21 @@ You need a Nubra Trading account with a **registered phone number** and **MPIN**
 
 **OTP (default):**
 ```python
-nubra = InitNubraSdk(NubraEnv.PROD)
+nubra = InitNubraSdk(NubraEnv.UAT)
 # Prompts: phone → OTP → MPIN
 ```
 
 **TOTP (one-time setup, then scripted login):**
 ```python
 # 1) Generate secret and add to Authenticator app
-nubra = InitNubraSdk(env=NubraEnv.PROD)
+nubra = InitNubraSdk(env=NubraEnv.UAT)
 secret = nubra.totp_generate_secret()
 
 # 2) Enable TOTP (prompts for 6-digit TOTP + MPIN)
 nubra.totp_enable()
 
 # 3) Future logins (phone → TOTP → MPIN, no SMS)
-nubra = InitNubraSdk(env=NubraEnv.PROD, totp_login=True)
+nubra = InitNubraSdk(env=NubraEnv.UAT, totp_login=True)
 ```
 
 **Login using .env (no prompts for phone/MPIN):**
@@ -68,7 +68,7 @@ cp env.example .env
 # Edit .env: set PHONE_NO and MPIN
 ```
 ```python
-nubra = InitNubraSdk(NubraEnv.PROD, env_creds=True)
+nubra = InitNubraSdk(NubraEnv.UAT, env_creds=True)
 ```
 
 **Logout (clears tokens; next run = full auth again):**

@@ -22,7 +22,7 @@ STRIKE_RANGES = {
 
 def main():
     # Initialize SDK. Use env_creds=True if you have PHONE_NO and MPIN in .env
-    nubra = InitNubraSdk(NubraEnv.PROD)  # or NubraEnv.PROD, env_creds=True
+    nubra = InitNubraSdk(NubraEnv.PROD)  # or NubraEnv.UAT for testing
 
     instruments = InstrumentData(nubra)
     df_all = instruments.get_instruments_dataframe()

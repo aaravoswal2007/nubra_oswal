@@ -16,7 +16,7 @@ def main():
     # 1) OTP: prompts for phone → OTP → MPIN (re-login every 7 days)
 
 
-    # nubra = InitNubraSdk(NubraEnv.PROD)
+    # nubra = InitNubraSdk(NubraEnv.UAT)
 
     # 2) TOTP: after enabling TOTP once, use this for scripted login (phone → TOTP → MPIN)
     # nubra = InitNubraSdk(env=NubraEnv.PROD, totp_login=True)
