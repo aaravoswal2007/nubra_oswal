@@ -6,7 +6,7 @@ Print full option list and a second DataFrame filtered by strike ranges (CE and 
 
 import pandas as pd
 from nubra_python_sdk.refdata.instruments import InstrumentData
-from nubra_python_sdk.start_sdk import InitNubraSdk, NubraEnv
+from nubra_client import ensure_nubra
 
 # Underlying symbols (NSE)
 OPTION_UNDERLYINGS = ["RELIANCE", "ADANIENT", "ADANIGREEN", "HDFCBANK", "KOTAKBANK"]
@@ -21,8 +21,8 @@ STRIKE_RANGES = {
 }
 
 def main():
-    # Initialize SDK. Use env_creds=True if you have PHONE_NO and MPIN in .env
-    nubra = InitNubraSdk(NubraEnv.PROD)  # or NubraEnv.UAT for testing
+    # Initialize SDK (UAT vs PROD from .env NUBRA_ENV; PHONE_NO and MPIN from .env)
+    nubra = ensure_nubra()
 
     instruments = InstrumentData(nubra)
     df_all = instruments.get_instruments_dataframe()

@@ -1,30 +1,22 @@
 #!/usr/bin/env python3
 """
-Nubra Python SDK (V2) – authentication examples.
+Nubra Python SDK (V2) – authentication via nubra_client.
+UAT vs PROD from .env NUBRA_ENV; PHONE_NO and MPIN from .env.
 See README for OTP vs TOTP and .env setup.
 """
 
 def main():
     try:
-        from nubra_python_sdk.start_sdk import InitNubraSdk, NubraEnv
+        from nubra_client import ensure_nubra, _env_nubra
     except ImportError as e:
         print("Nubra SDK not found. Install with:")
         print("  pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple nubra-sdk")
         raise SystemExit(1) from e
 
-    # --- Choose one ---
-    # 1) OTP: prompts for phone → OTP → MPIN (re-login every 7 days)
-
-
-    # nubra = InitNubraSdk(NubraEnv.UAT)
-
-    # 2) TOTP: after enabling TOTP once, use this for scripted login (phone → TOTP → MPIN)
-    # nubra = InitNubraSdk(env=NubraEnv.PROD, totp_login=True)
-
-    # 3) Credentials from .env (copy .env.example to .env, set PHONE_NO and MPIN)
-    nubra = InitNubraSdk(NubraEnv.PROD, env_creds=True)
-
-    print("SDK initialized. Use nubra for market data, orders, portfolio, etc.")
+    # Single client; UAT/PROD from .env NUBRA_ENV, credentials from .env (PHONE_NO, MPIN)
+    nubra = ensure_nubra()
+    print(f"SDK initialized (env={_env_nubra()}). Use nubra for market data, orders, portfolio, etc.")
+    # For TOTP login: ensure_nubra(totp_login=True)
     # nubra.logout()  # full logout; next run will ask for full auth again
 
 if __name__ == "__main__":

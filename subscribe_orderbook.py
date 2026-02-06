@@ -17,7 +17,7 @@ os.environ['SSL_CERT_FILE'] = certifi.where()
 os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 
 from nubra_python_sdk.ticker import websocketdata
-from nubra_python_sdk.start_sdk import InitNubraSdk, NubraEnv
+from nubra_client import ensure_nubra
 
 # ----- In-memory market_data (Oswal-compatible structure) -----
 # Same key_name and field layout as Oswal_trading_frontend/.../marketdata_store.market_data
@@ -211,8 +211,8 @@ def main():
     print(f"Subscribing to whole list; printing ticks for key: {TARGET_KEY_PRINT}")
     print("-" * 80)
     
-    # Initialize SDK
-    nubra = InitNubraSdk(NubraEnv.PROD)  # or NubraEnv.UAT for testing
+    # Initialize SDK (UAT vs PROD from .env NUBRA_ENV)
+    nubra = ensure_nubra()
     
     # Initialize WebSocket
     socket = websocketdata.NubraDataSocket(
