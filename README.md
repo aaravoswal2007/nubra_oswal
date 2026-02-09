@@ -75,6 +75,15 @@ cp env.example .env
 nubra = InitNubraSdk(NubraEnv.UAT, env_creds=True)
 ```
 
+**Fully automated login (phone + MPIN + TOTP from .env):**
+
+1. One-time: enable TOTP in Nubra (get secret via `nubra.totp_generate_secret()` and `nubra.totp_enable()`).
+   - When `NUBRA_TOTP_SECRET` is set in `.env`, `totp_enable()` will auto-fill both TOTP (from pyotp) and MPIN (from `.env`) — no manual typing.
+2. Add to `.env`: `NUBRA_TOTP_SECRET=<your-base32-secret>` (same secret as in your Authenticator app).
+3. Use `ensure_nubra()` from `nubra_client` (default: `env_creds=True`). If `NUBRA_TOTP_SECRET` is set, TOTP is auto-filled via `pyotp` and MPIN from `.env` — no manual typing of phone, MPIN, or TOTP.
+
+Requires `pyotp` (in `requirements.txt`). Do not commit `.env` or share `NUBRA_TOTP_SECRET`.
+
 **Logout (clears tokens; next run = full auth again):**
 
 ```python
@@ -105,7 +114,7 @@ This script only checks that the SDK can be imported and shows a minimal initial
 ## Phase 1: Instrument map + Nubra client (place_order foundation)
 
 - **instrument_dict_nubra.py**: Builds `instrument_dict` (key*name → ref_id) from `option_ref_ids_feb_filtered_by_strikes.csv`; optionally caches to `instrument_dict_nubra.json`. Same key_name format as Oswal: `{asset}*{strike//100}\_{option_type}`.
-- **nubra_client.py**: Singleton `ensure_nubra()` – one Nubra SDK client for orders/market data. Uses `.env` when `env_creds=True`. Set `NUBRA_ENV=UAT` or `NUBRA_ENV=PROD` (default PROD).
+- **nubra_client.py**: Singleton `ensure_nubra()` – one Nubra SDK client for orders/market data. Uses `.env` when `env_creds=True`. Optional `NUBRA_TOTP_SECRET` in `.env` enables fully automated login (phone + MPIN + TOTP, no prompts). Set `NUBRA_ENV=UAT` or `NUBRA_ENV=PROD` (default PROD).
 
 **Verify Phase 1:**
 

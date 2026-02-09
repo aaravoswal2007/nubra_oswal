@@ -30,6 +30,7 @@ def _on_lot_filled(info: Dict[str, Any]) -> None:
 
 
 def main() -> None:
+    # Note: ensure_nubra() should be called by the parent test file before calling this
     key_name = os.environ.get("PHASE7_KEY_NAME", "RELIANCE_1500_CE")
     lots = int(os.environ.get("PHASE7_LOTS", "50"))
     lot_size = int(os.environ.get("PHASE7_LOT_SIZE", "600"))

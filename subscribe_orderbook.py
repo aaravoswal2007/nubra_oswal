@@ -17,7 +17,7 @@ os.environ['SSL_CERT_FILE'] = certifi.where()
 os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 
 from nubra_python_sdk.ticker import websocketdata
-from nubra_client import ensure_nubra
+from nubra_client import get_nubra
 
 # ===== Import local marketdata_store =====
 import marketdata_store
@@ -268,8 +268,8 @@ def main():
     print(f"Subscribing to {len(ref_ids_str)} instruments (and on every reconnect)")
     print("-" * 80)
     
-    # Initialize SDK (UAT vs PROD from .env NUBRA_ENV)
-    nubra = ensure_nubra()
+    # Get SDK client (should already be initialized by parent test file via ensure_nubra())
+    nubra = get_nubra()
     
     # Initialize WebSocket — use on_orderbook_data only for orderbook ticks
     socket = websocketdata.NubraDataSocket(
