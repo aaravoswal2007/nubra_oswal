@@ -37,19 +37,21 @@ You need a Nubra Trading account with a **registered phone number** and **MPIN**
 
 **Options:**
 
-| Method | Use case |
-|--------|----------|
-| **OTP** | Default. Prompts for phone → OTP (SMS) → MPIN. Re-login every 7 days. |
+| Method   | Use case                                                                               |
+| -------- | -------------------------------------------------------------------------------------- |
+| **OTP**  | Default. Prompts for phone → OTP (SMS) → MPIN. Re-login every 7 days.                  |
 | **TOTP** | For scripts. One-time setup: generate secret, enable TOTP, then use `totp_login=True`. |
-| **.env** | No typing: SDK reads `PHONE_NO` and `MPIN` from a `.env` file when `env_creds=True`. |
+| **.env** | No typing: SDK reads `PHONE_NO` and `MPIN` from a `.env` file when `env_creds=True`.   |
 
 **OTP (default):**
+
 ```python
 nubra = InitNubraSdk(NubraEnv.UAT)
 # Prompts: phone → OTP → MPIN
 ```
 
 **TOTP (one-time setup, then scripted login):**
+
 ```python
 # 1) Generate secret and add to Authenticator app
 nubra = InitNubraSdk(env=NubraEnv.UAT)
@@ -63,20 +65,24 @@ nubra = InitNubraSdk(env=NubraEnv.UAT, totp_login=True)
 ```
 
 **Login using .env (no prompts for phone/MPIN):**
+
 ```bash
 cp env.example .env
 # Edit .env: set PHONE_NO and MPIN
 ```
+
 ```python
 nubra = InitNubraSdk(NubraEnv.UAT, env_creds=True)
 ```
 
 **Logout (clears tokens; next run = full auth again):**
+
 ```python
 nubra.logout()
 ```
 
-## Run the example  
+## Run the example
+
 `Exception occured while fetching user info: 'NoneType' object is not subscriptable`.  
 This comes from the SDK’s version-check call; UAT’s userinfo response can omit `version_info`. You can ignore it — auth succeeded and the client is usable for API calls.
 
@@ -90,15 +96,15 @@ This script only checks that the SDK can be imported and shows a minimal initial
 
 ## SDK features (V2)
 
-- Market data, real-time quotes, Greeks, option chains  
-- Order management (regular, CO, flexi, basket)  
-- Positions, holdings, funds  
-- MPIN-based authentication  
-- Production-ready API access  
+- Market data, real-time quotes, Greeks, option chains
+- Order management (regular, CO, flexi, basket)
+- Positions, holdings, funds
+- MPIN-based authentication
+- Production-ready API access
 
 ## Phase 1: Instrument map + Nubra client (place_order foundation)
 
-- **instrument_dict_nubra.py**: Builds `instrument_dict` (key_name → ref_id) from `option_ref_ids_feb_filtered_by_strikes.csv`; optionally caches to `instrument_dict_nubra.json`. Same key_name format as Oswal: `{asset}_{strike//100}_{option_type}`.
+- **instrument_dict_nubra.py**: Builds `instrument_dict` (key*name → ref_id) from `option_ref_ids_feb_filtered_by_strikes.csv`; optionally caches to `instrument_dict_nubra.json`. Same key_name format as Oswal: `{asset}*{strike//100}\_{option_type}`.
 - **nubra_client.py**: Singleton `ensure_nubra()` – one Nubra SDK client for orders/market data. Uses `.env` when `env_creds=True`. Set `NUBRA_ENV=UAT` or `NUBRA_ENV=PROD` (default PROD).
 
 **Verify Phase 1:**
@@ -153,6 +159,43 @@ python phase3_verify.py           # test with sample market_data
 ```bash
 python phase4_verify.py   # start WebSocket, print order_state every 5s; place order in another terminal to see updates
 ```
+
+## Phase 5+6: Executor (single- and multi-splice)
+
+- **executor_nubra.py**: `place_order_splices_mid_ltq_nubra(...)` — places orders at MID in splices, polls `order_state`, emits `on_lot_filled` at whole-lot boundaries. No modify/cancel or MARKET conversion in this phase.
+
+## Phase 7: Bridge integration (frontend can use Nubra)
+
+- **executor_nubra_bridge.py**: Exposes `place_order_splices_mid_ltq` with the same signature as `executor_live.place_order_splices_mid_ltq_real`. The frontend (Bridge, leg2, position_management) can use the Nubra executor without code changes when `USE_NUBRA=1`.
+- **Bridge.py** (in Oswal_trading_frontend): If env `USE_NUBRA=1` (or `true`/`yes`), prepends `nubra_oswal` to `sys.path` and patches `executor_live.place_order_splices_mid_ltq` to the Nubra adapter. XTS login (`ensure_xt`) is skipped in Nubra mode.
+
+**Verify Phase 7 (without the frontend — nubra_oswal only):**
+
+```bash
+# Terminal 1: market data
+python subscribe_orderbook.py
+
+# Terminal 2: run bridge adapter with frontend-style kwargs
+python phase7_verify.py
+```
+
+Optional env overrides: `PHASE7_KEY_NAME`, `PHASE7_LOTS`, `PHASE7_LOT_SIZE`, `PHASE7_SPLICE_LOTS`, `PHASE7_SIDE`.
+
+**Same process (live MID for place and modify):** Run market data and executor together so the executor sees live orderbook and uses current mid on modify:
+
+```bash
+python run_phase7_with_market_data.py
+```
+
+This starts `subscribe_orderbook` in a background thread, waits ~15s, then runs `phase7_verify` in the same process.
+
+**Using Nubra from the frontend:**
+
+1. Set `USE_NUBRA=1` in the environment before starting the Bridge.
+2. Ensure Nubra market data is available in the same process: run `subscribe_orderbook.py` (from `nubra_oswal`) in the same process, or otherwise populate `subscribe_orderbook.market_data` for the symbols you trade.
+3. Run the Bridge from `Oswal_trading_frontend/frontend/python` (so the relative path to `nubra_oswal` resolves). Instrument names (e.g. `ADANIGREEN_920_CE`) must exist in Nubra’s instrument dict.
+
+**Note:** `modify_interval_sec` and `aggressive_after_sec` are ignored by the Nubra executor in this phase.
 
 ## Links
 

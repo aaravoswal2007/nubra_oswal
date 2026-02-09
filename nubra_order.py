@@ -12,6 +12,14 @@ from nubra_client import ensure_nubra
 # Serialize all Nubra order API calls (place/modify/cancel) to avoid concurrent-request issues.
 _NUBRA_ORDER_LOCK = threading.Lock()
 
+# Same as Oswal executor_live: 0.05 rupees = 5 paise tick
+PRICE_TICK = 0.05
+
+
+def _round_tick(x: float) -> float:
+    """Round price to nearest tick (0.05 rupees). Same as Oswal _round_tick."""
+    return round(round(x / PRICE_TICK) * PRICE_TICK, 2)
+
 
 def place_order_nubra(
     ref_id: int,
@@ -57,13 +65,10 @@ def place_order_nubra(
     price_type_upper = (price_type or "LIMIT").strip().upper()
     price_type_val = "MARKET" if price_type_upper == "MARKET" else "LIMIT"
 
-    # Round price to tick_size (tick_size from CSV is in paise, convert to rupees for rounding)
+    # Round price to nearest 0.05 rupees (same as Oswal); Nubra API expects order_price as integer (paise)
     if price_type_val == "LIMIT":
-        order_price = float(price_rupees)
-        # Round to nearest tick_size (tick_size from CSV is in paise, convert to rupees)
-        tick_size_paise = 5  # default 5 paise
-        # tick_size_rupees = tick_size_paise / 100  # convert to rupees
-        order_price = round(order_price / tick_size_paise) * tick_size_paise
+        order_price_rupees = _round_tick(float(price_rupees))
+        order_price = int(round(order_price_rupees * 100))  # paise
     else:
         order_price = 0
 
@@ -132,6 +137,82 @@ def place_order_nubra_by_key(
     if ref_id is None:
         raise ValueError(f"key_name {key_name!r} not in instrument_dict")
     return place_order_nubra(ref_id, side, qty, price_rupees, **kwargs)
+
+
+def modify_order_nubra(
+    order_id: int | str,
+    price_rupees: float,
+    qty: int,
+    *,
+    exchange: str = "NSE",
+) -> dict[str, Any]:
+    """
+    Modify an existing Nubra order's price (and qty). Uses same lock as place_order.
+    Uses modify_order_v2 with request dict per Nubra docs (order_price in paise, order_qty, exchange, order_type).
+    """
+    order_price_rupees = _round_tick(float(price_rupees))
+    order_price_paise = int(round(order_price_rupees * 100))
+
+    # Per Nubra docs: modify_order_v2(order_id=..., request={...}); ORDER_TYPE_REGULAR requires order_price, order_qty, exchange, order_type
+    # Doc example uses string values; we send int for order_price/order_qty (paise) - if API rejects, try str()
+    request: dict[str, Any] = {
+        "order_price": order_price_paise,
+        "order_qty": int(qty),
+        "exchange": (exchange or "NSE").strip().upper(),
+        "order_type": "ORDER_TYPE_REGULAR",
+    }
+
+    nubra = ensure_nubra()
+    from nubra_python_sdk.trading.trading_data import NubraTrader
+
+    trade = NubraTrader(nubra, version="V2")
+    with _NUBRA_ORDER_LOCK:
+        result = trade.modify_order_v2(order_id=int(order_id), request=request)
+    print(f"[nubra_order] modify_order_v2 order_id={order_id} price_sent={order_price_rupees:.2f} rupees ({order_price_paise} paise) result={result}", flush=True)
+
+    # Wait for next order_update for this order_id via WebSocket (consider order modified when socket confirms)
+    from order_updates_nubra import wait_for_order_update, get_order_state
+    socket_confirmed = wait_for_order_update(int(order_id), timeout_sec=3.0)
+
+    # If socket confirmed, compare the order_price in the update with what we sent.
+    price_match = False
+    state_px = None
+    if socket_confirmed:
+        st = get_order_state(int(order_id))
+        if st is not None:
+            state_px = st.get("order_px")
+            try:
+                if state_px is not None and abs(float(state_px) - float(order_price_rupees)) < 1e-6:
+                    price_match = True
+            except (TypeError, ValueError):
+                price_match = False
+
+    def _get(name: str, default: Any = None) -> Any:
+        if isinstance(result, dict):
+            return result.get(name, default)
+        return getattr(result, name, default)
+
+    if socket_confirmed and price_match:
+        print(f"[nubra_order] modify_order_v2 CONFIRMED: order_id={order_id} updated to {order_price_rupees:.2f} rupees", flush=True)
+    elif not socket_confirmed:
+        # No order_update seen within timeout – socket may be slow/disconnected or exchange delayed
+        print(
+            f"[nubra_order] modify_order_v2 WARNING: order_id={order_id} – no order_update within 10s "
+            f"(socket slow/disconnected or exchange delay)",
+            flush=True,
+        )
+    elif socket_confirmed and not price_match:
+        # Socket responded but order_price in update does not match what we sent
+        print(
+            f"[nubra_order] modify_order_v2 WARNING: order_id={order_id} – price mismatch: "
+            f"sent {order_price_rupees:.2f} rupees, socket order_price={state_px}",
+            flush=True,
+        )
+    return {
+        "order_id": _get("order_id", order_id),
+        "message": _get("message"),
+        "result": result,
+    }
 
 
 if __name__ == "__main__":

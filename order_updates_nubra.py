@@ -13,6 +13,10 @@ from typing import Any, Optional
 order_state: dict[int, dict] = {}
 _order_lock = threading.Lock()
 
+# Wait for next order_update for an order_id (used after modify_order to confirm via socket)
+_modify_wait_events: dict[int, threading.Event] = {}
+_modify_wait_lock = threading.Lock()
+
 _socket_connected = False
 _socket_started = False
 _socket_instance = None
@@ -51,6 +55,7 @@ def _apply_update(msg: Any) -> None:
     filled_qty = _get_attr(msg, "filled_qty")
     status = _get_attr(msg, "order_status")
     avg_price = _get_attr(msg, "avg_price")  # May be in paise
+    order_price = _get_attr(msg, "order_price")  # Limit price (in paise)
     if filled_qty is not None:
         try:
             filled_qty = int(filled_qty)
@@ -64,8 +69,22 @@ def _apply_update(msg: Any) -> None:
                 avg_price = round(avg_price / 100.0, 2)
         except (TypeError, ValueError):
             avg_price = None
+    order_px_rupees: Optional[float] = None
+    if order_price is not None:
+        try:
+            op = float(order_price)
+            if op > 0 and op < 1e9 and op == int(op):
+                order_px_rupees = round(op / 100.0, 2)
+        except (TypeError, ValueError):
+            order_px_rupees = None
     status_str = _normalize_status(status)
-    update_socket_state(oid, filled_qty or 0, status_str, avg_px=avg_price)
+    update_socket_state(oid, filled_qty or 0, status_str, avg_px=avg_price, order_px=order_px_rupees)
+    # Signal any waiter that we got an order_update for this order_id (e.g. after modify)
+    with _modify_wait_lock:
+        ev = _modify_wait_events.pop(oid, None)
+    if ev is not None:
+        _log_modify_confirmed(oid, msg)
+        ev.set()
 
 
 def update_socket_state(
@@ -73,6 +92,7 @@ def update_socket_state(
     filled_qty: int,
     status: str,
     avg_px: Optional[float] = None,
+    order_px: Optional[float] = None,
 ) -> None:
     """
     Update order_state for an order (thread-safe).
@@ -84,7 +104,7 @@ def update_socket_state(
     except (TypeError, ValueError):
         return
     with _order_lock:
-        cur = order_state.get(oid) or {"filled": 0, "status": "PENDING", "avg_px": None, "ts": 0.0}
+        cur = order_state.get(oid) or {"filled": 0, "status": "PENDING", "avg_px": None, "order_px": None, "ts": 0.0}
         prev_filled = int(cur.get("filled") or 0)
         new_filled = int(filled_qty or 0)
         cur["filled"] = max(prev_filled, max(0, new_filled))
@@ -92,6 +112,11 @@ def update_socket_state(
         if avg_px is not None:
             try:
                 cur["avg_px"] = float(avg_px)
+            except (TypeError, ValueError):
+                pass
+        if order_px is not None:
+            try:
+                cur["order_px"] = float(order_px)
             except (TypeError, ValueError):
                 pass
         cur["ts"] = time.time()
@@ -114,6 +139,64 @@ def get_socket_state() -> dict[int, dict]:
 def is_socket_connected() -> bool:
     """True if order-updates WebSocket is connected."""
     return _socket_connected
+
+
+def wait_for_order_update(order_id: int, timeout_sec: float = 10.0) -> bool:
+    """
+    Block until the next order_update (or trade_update) for this order_id is received via WebSocket,
+    or timeout. Used after modify_order_v2 to consider the order modified when socket confirms.
+    Returns True if an update was received, False if timeout.
+    """
+    try:
+        oid = int(order_id)
+    except (TypeError, ValueError):
+        return False
+    ev = threading.Event()
+    with _modify_wait_lock:
+        _modify_wait_events[oid] = ev
+    ev.clear()
+    signaled = ev.wait(timeout=max(0.0, timeout_sec))
+    with _modify_wait_lock:
+        _modify_wait_events.pop(oid, None)
+    return signaled
+
+
+def _message_to_dict(msg: Any) -> dict[str, Any]:
+    """Convert OrderInfoWrapper / AckInfoWrapper / dict to a plain dict of all fields for logging."""
+    if msg is None:
+        return {}
+    if isinstance(msg, dict):
+        return dict(msg)
+    out: dict[str, Any] = {}
+    for name in dir(msg):
+        if name.startswith("_"):
+            continue
+        try:
+            val = getattr(msg, name)
+            if callable(val):
+                continue
+            out[name] = val
+        except Exception:
+            pass
+    return out
+
+
+def _log_update(tag: str, msg: Any) -> None:
+    """Log full order/trade update response (all fields from OrderInfoWrapper / AckInfoWrapper)."""
+    d = _message_to_dict(msg)
+    if not d:
+        print(f"[order_updates_nubra] {tag} (empty)", flush=True)
+        return
+    lines = [f"[order_updates_nubra] {tag}"]
+    for k in sorted(d.keys()):
+        v = d[k]
+        lines.append(f"  {k}: {v}")
+    print("\n".join(lines), flush=True)
+
+
+def _log_modify_confirmed(order_id: int, msg: Any) -> None:
+    """Log order_update only when this update is the modify confirmation for this order_id (waiter was set)."""
+    _log_update(f"Polling ended for order_id={order_id}", msg)
 
 
 def _on_order_update(msg: Any) -> None:

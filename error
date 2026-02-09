@@ -1,0 +1,157 @@
+[Error] ❌ Connection failed: 502, message='Invalid response status', url='wss://uatapi.nubra.io/apibatch/ws'
+[Status] Closed: WebSocket closed
+
+[Error] ❌ Connection failed: 504, message='Invalid response status', url='wss://uatapi.nubra.io/apibatch/ws'
+[Status] Closed: WebSocket closed
+[Status] Reconnected (#2): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#3): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#4): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#5): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#6): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#7): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#8): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#9): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#10): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#11): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#12): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#13): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#14): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#15): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#16): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#17): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#18): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#19): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#20): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#21): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#22): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#23): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#24): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#25): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#26): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#27): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#28): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#29): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#30): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#31): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#32): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#33): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#34): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#35): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#36): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#37): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#38): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#39): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#40): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#41): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#42): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#43): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#44): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#45): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#46): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#47): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#48): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#49): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#50): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#51): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#52): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#53): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#54): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#55): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#56): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#57): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#58): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#59): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#60): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#61): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#62): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#63): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#64): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#65): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#66): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#67): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#68): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#69): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#70): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#71): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#72): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#73): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#74): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#75): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#76): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)
+[Status] Reconnected (#77): WebSocket Connected!
+[Status] Subscribed to orderbook (161 instruments)

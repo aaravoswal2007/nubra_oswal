@@ -55,9 +55,19 @@ ref_id_to_key_name = {}
 # Will be set to first instrument or can be configured
 TARGET_KEY_PRINT = None
 
+# Real-time market data log: set LOG_MARKET_DATA_KEY=ADANIGREEN_920_CE to log that symbol to console (and log file)
+LOG_MARKET_DATA_KEY = os.environ.get("LOG_MARKET_DATA_KEY", "").strip() or None  # e.g. "ADANIGREEN_920_CE"
+# Throttle: log at most every N seconds for the key (0 = every tick)
+LOG_MARKET_DATA_INTERVAL_SEC = float(os.environ.get("LOG_MARKET_DATA_INTERVAL_SEC", "1.0"))
+
 _message_count = 0
 _connect_count = 0
 _tick_count = 0
+_last_log_time = 0.0
+
+# For re-subscribe on reconnect: set in main() before connect
+_ref_ids_to_subscribe = None
+_data_socket = None
 
 
 def _orderbook_to_oswal_tick(msg) -> dict | None:
@@ -117,7 +127,7 @@ def _orderbook_to_oswal_tick(msg) -> dict | None:
 
 def on_orderbook_data(msg):
     """Process every OrderBookWrapper: resolve key_name, write Oswal-format tick to market_data."""
-    global _tick_count
+    global _tick_count, _last_log_time
     try:
         incoming_ref_id = getattr(msg, "ref_id", None)
         if incoming_ref_id is None:
@@ -139,11 +149,33 @@ def on_orderbook_data(msg):
         market_data[key_name] = entry
         _tick_count += 1
 
+        # Optional: real-time log for a specific symbol (e.g. LOG_MARKET_DATA_KEY=ADANIGREEN_920_CE)
+        if LOG_MARKET_DATA_KEY and key_name == LOG_MARKET_DATA_KEY:
+            now = time.time()
+            if LOG_MARKET_DATA_INTERVAL_SEC <= 0 or (now - _last_log_time) >= LOG_MARKET_DATA_INTERVAL_SEC:
+                _last_log_time = now
+                bb1 = entry.get("Best bid 1", "N/A")
+                ba1 = entry.get("Best ask 1", "N/A")
+                ltp = entry.get("ltp", "N/A")
+                try:
+                    if bb1 != "N/A" and ba1 != "N/A":
+                        pb, _ = bb1.split("|", 1) if "|" in str(bb1) else (bb1, 0)
+                        pa, _ = ba1.split("|", 1) if "|" in str(ba1) else (ba1, 0)
+                        mid = (float(pb) + float(pa)) / 2.0
+                        mid = round(mid / 0.05) * 0.05
+                    else:
+                        mid = "N/A"
+                except Exception:
+                    mid = "N/A"
+                line = f"[MD] {key_name}  bid1={bb1}  ask1={ba1}  mid={mid}  ltp={ltp}"
+                print(line, flush=True)
+                log.info(line)
+
     except Exception as e:
         log.error(f"Error updating market data: {e}")
 
 def on_connect(msg):
-    """Connection callback - log connection status."""
+    """Connection callback - log connection status and (re-)subscribe to orderbook."""
     global _connect_count
     _connect_count += 1
     if _connect_count == 1:
@@ -153,6 +185,16 @@ def on_connect(msg):
     else:
         log.info(f"Reconnected (#{_connect_count}): {msg}")
         print(f"[Status] Reconnected (#{_connect_count}): {msg}", flush=True)
+
+    # (Re-)subscribe to orderbook so data flows after every connect/reconnect
+    if _ref_ids_to_subscribe and _data_socket:
+        try:
+            result = _data_socket.subscribe(_ref_ids_to_subscribe, data_type="orderbook")
+            log.info(f"Subscribed to orderbook ({len(_ref_ids_to_subscribe)} ref_ids) result={result}")
+            print(f"[Status] Subscribed to orderbook ({len(_ref_ids_to_subscribe)} instruments)", flush=True)
+        except Exception as e:
+            log.error(f"Subscribe failed: {e}", exc_info=True)
+            print(f"[Status] Subscribe failed: {e}", flush=True)
 
 def on_close(reason):
     log.info(f"Connection closed: {reason}")
@@ -220,7 +262,10 @@ def main():
     # instruments_to_subscribe is already a list of strings (ref_ids)
     ref_ids_str = instruments_to_subscribe
 
-    print(f"Subscribing to {len(ref_ids_str)} instruments")
+    global _ref_ids_to_subscribe, _data_socket
+    _ref_ids_to_subscribe = ref_ids_str
+
+    print(f"Subscribing to {len(ref_ids_str)} instruments (and on every reconnect)")
     print("-" * 80)
     
     # Initialize SDK (UAT vs PROD from .env NUBRA_ENV)
@@ -234,64 +279,14 @@ def main():
         on_close=on_close,
         on_error=on_error
     )
+    _data_socket = socket
     
-    # Connect
+    # Connect; on_connect will (re-)subscribe to orderbook for this and every reconnect
     socket.connect()
     
-    # Wait a moment for connection to be fully established
-    print("Waiting for connection to stabilize...", flush=True)
-    time.sleep(2)
-    
-    # Check connection status before subscribing
-    print(f"\n[Subscription Check] WebSocket connected: {socket.connected}", flush=True)
-    if not socket.connected:
-        print("[ERROR] WebSocket is not connected! Cannot subscribe.", flush=True)
-        return
-    
-    # Subscribe to orderbook data for whole list
-    # Note: subscribe expects a list of strings
-    print(f"\n[Subscription] Subscribing to whole list ({len(ref_ids_str)} ref_ids)...", flush=True)
-    
-    try:
-        print(f"\n[Subscription] Calling socket.subscribe()...", flush=True)
-        print(f"[Subscription] Parameters:", flush=True)
-        print(f"  - symbols: {len(ref_ids_str)} ref_ids (from instruments_to_subscribe)", flush=True)
-        print(f"  - data_type: 'orderbook'", flush=True)
-        print(f"  - socket.connected: {socket.connected}", flush=True)
-        
-        # Call subscribe with whole list
-        result = socket.subscribe(ref_ids_str, data_type="orderbook")
-        print(f"[Subscription] socket.subscribe() returned: {result}", flush=True)
-        print(f"[Subscription] Subscription method completed without exception", flush=True)
-        
-        # Wait a moment for subscription to be processed
-        time.sleep(1)
-        
-        # Check connection status after subscription
-        print(f"[Subscription] Post-subscription check:", flush=True)
-        print(f"  - socket.connected: {socket.connected}", flush=True)
-        
-        # Try to check subscriptions_batch (may not be accessible)
-        try:
-            subs_count = len(socket.subscriptions_batch) if hasattr(socket, 'subscriptions_batch') else "N/A"
-            print(f"  - Active subscriptions count: {subs_count}", flush=True)
-            if hasattr(socket, 'subscriptions_batch') and socket.subscriptions_batch:
-                print(f"  - Subscription keys: {list(socket.subscriptions_batch)[:3]}...", flush=True)
-        except Exception as e:
-            print(f"  - Could not access subscriptions_batch: {e}", flush=True)
-        
-        print(f"\n[Subscription] ✅ Subscription request sent successfully!", flush=True)
-        print(f"[Subscription] Waiting for orderbook data updates...", flush=True)
-        print(f"[Subscription] If no data appears, the instruments may not be actively trading.\n", flush=True)
-        
-    except Exception as e:
-        log.error(f"❌ ERROR during subscription: {e}", exc_info=True)
-        print(f"\n[Subscription] ❌ ERROR during subscription: {e}", flush=True)
-        import traceback
-        print(f"[Subscription] Traceback:", flush=True)
-        traceback.print_exc()
-
-    print(f"\n✅ Subscribed! Updating market_data for all {len(ref_ids_str)} instruments")
+    print(f"\n✅ Updating market_data for all {len(ref_ids_str)} instruments")
+    if LOG_MARKET_DATA_KEY:
+        print(f"[MD] Real-time market data logging: {LOG_MARKET_DATA_KEY} (every {LOG_MARKET_DATA_INTERVAL_SEC}s)", flush=True)
     print("Press Ctrl+C to stop")
     
     # Keep running - this blocks and processes incoming messages
