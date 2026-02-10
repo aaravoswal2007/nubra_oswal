@@ -15,11 +15,12 @@ from typing import Optional, Callable, Dict, Any
 
 from instrument_dict_nubra import ensure_instrument_dict
 from market_data_helpers import get_mid_price
-from nubra_order import place_order_nubra_by_key, modify_order_nubra
+from nubra_order import place_order_nubra_by_key, modify_order_nubra, cancel_order_nubra
 from order_updates_nubra import (
     start_order_updates_socket,
     update_socket_state,
     get_order_state,
+    wait_for_order_update,
     is_socket_connected,
 )
 
@@ -44,7 +45,8 @@ def place_order_splices_mid_ltq_nubra(
     """
     Nubra executor (mid-peg spliced).
     - Places one child (splice) at a time at MID price.
-    - Polls order_state until each child is filled (or terminal).
+    - Event-driven: waits for order updates (or timeout) instead of polling; handles
+      REJECTED (abort parent), CANCELLED/EXPIRED (continue parent), FILLED, and missing mode (15s).
     - Emits on_lot_filled at whole-lot boundaries (cumulative across splices).
     """
     side_upper = (side or "").strip().upper()
@@ -168,36 +170,62 @@ def place_order_splices_mid_ltq_nubra(
         filled_this_child = 0
         next_modify_at = time.monotonic() + modify_interval_sec
         last_modify_price_rupees: Optional[float] = work_px  # only modify when mid moves > modify_min_move_rupees
+        missing_started_at: Optional[float] = None  # when order_state had no entry for this order_id
+
         while True:
             now = time.monotonic()
+            # Event-driven: block until next order update or timeout (for modify + missing check)
+            wait_timeout = min(2.0, max(0.25, next_modify_at - now))
+            wait_for_order_update(order_id, timeout_sec=wait_timeout)
+
             st = get_order_state(order_id)
+
             if not st:
-                time.sleep(max(0.25, poll_interval_sec))
+                # Missing mode: order not in order_state
+                if missing_started_at is None:
+                    missing_started_at = now
+                    print(f"[executor_nubra] [WARN] Order {order_id} state missing — entering missing mode")
+                missing_for = now - missing_started_at
+                if missing_for >= 15.0:
+                    print(f"[executor_nubra] [FAILSAFE] Order {order_id} missing for {missing_for:.1f}s → cancelling then continuing parent")
+                    try:
+                        cancel_order_nubra(order_id)
+                    except Exception as e:
+                        print(f"[executor_nubra] cancel_order_nubra({order_id}) error: {e}", flush=True)
+                    break
                 continue
+
+            missing_started_at = None  # clear missing mode when we have state
 
             status = str(st.get("status") or "").upper()
             filled_resolved = int(st.get("filled") or 0)
             filled_resolved = max(0, min(filled_resolved, splice_qty))
             avg_px = st.get("avg_px")
 
+            # Fill delta
             if filled_resolved > filled_this_child:
                 inc = filled_resolved - filled_this_child
                 filled_this_child = filled_resolved
                 remaining_total -= inc
                 _maybe_emit(cum_filled_parent_qty + inc, avg_px=avg_px)
 
+            # Terminal: REJECTED → abort parent
             if status in ("REJECT", "REJECTED"):
-                print(f"[executor_nubra] Order {order_id} REJECTED (filled {filled_this_child}/{splice_qty}) → aborting parent")
+                print(f"[executor_nubra] [TERMINAL] Order {order_id} REJECTED (filled {filled_this_child}/{splice_qty}) → aborting parent")
                 remaining_total = 0
                 break
+
+            # Terminal: CANCEL/CANCELLED/EXPIRED → continue parent
             if status in ("CANCEL", "CANCELLED", "EXPIRED"):
-                print(f"[executor_nubra] Order {order_id} {status} (filled {filled_this_child}/{splice_qty}) → continuing parent")
+                print(f"[executor_nubra] [TERMINAL] Order {order_id} {status} (filled {filled_this_child}/{splice_qty}) → continuing parent")
                 break
-            if filled_this_child >= splice_qty:
+
+            # Terminal: FILLED or fully filled
+            if status == "FILLED" or filled_this_child >= splice_qty:
                 print(f"[executor_nubra] Splice {splice_idx} complete: order_id={order_id} filled={filled_this_child}/{splice_qty}")
                 break
 
-            # Periodic modify to new MID until fill/reject/cancel (only when mid moved > modify_min_move_rupees)
+            # Periodic modify to new MID (only when mid moved > modify_min_move_rupees)
             if modify_interval_sec > 0 and now >= next_modify_at:
                 try:
                     new_mid = get_mid_price(market_data, key_name)
@@ -208,8 +236,6 @@ def place_order_splices_mid_ltq_nubra(
                 except Exception as e:
                     print(f"[executor_nubra] modify_order error: {e}", flush=True)
                 next_modify_at = now + modify_interval_sec
-
-            time.sleep(max(0.25, poll_interval_sec))
 
         if remaining_total <= 0:
             break

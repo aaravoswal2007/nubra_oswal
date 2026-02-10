@@ -33,14 +33,28 @@ def _get_attr(msg: Any, name: str, default: Any = None) -> Any:
 
 
 def _normalize_status(status: Any) -> str:
-    """Map Nubra OrderStatusEnum to short uppercase status (PENDING, FILLED, etc.)."""
+    """
+    Map Nubra OrderStatusEnum to canonical uppercase status for executor.
+    Handles enum strings like OrderStatusEnum.ORDER_STATUS_CANCELLED or ORDER_STATUS_CANCELLED.
+    """
     if status is None:
         return "PENDING"
     s = str(status).strip().upper()
-    # Strip enum prefix if present, e.g. ORDER_STATUS_FILLED -> FILLED
+    # Strip enum prefix: "ORDERSTATUSENUM.ORDER_STATUS_CANCELLED" -> "CANCELLED", or "ORDER_STATUS_FILLED" -> "FILLED"
+    if "." in s:
+        s = s.split(".")[-1]
     if s.startswith("ORDER_STATUS_"):
         s = s.replace("ORDER_STATUS_", "", 1)
-    return s if s else "PENDING"
+    if not s:
+        return "PENDING"
+    # Canonical mappings (executor checks REJECT/REJECTED, CANCEL/CANCELLED/EXPIRED, FILLED)
+    if s in ("REJECT", "REJECTED"):
+        return "REJECTED"
+    if s in ("CANCEL", "CANCELLED", "EXPIRED"):
+        return s  # executor checks all three
+    if s in ("FILLED", "COMPLETE"):
+        return "FILLED"
+    return s
 
 
 def _apply_update(msg: Any) -> None:

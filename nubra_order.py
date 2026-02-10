@@ -215,10 +215,44 @@ def modify_order_nubra(
     }
 
 
+def cancel_order_nubra(order_id: int | str) -> dict[str, Any]:
+    """
+    Cancel a single Nubra order by ID (REST: DELETE orders/{order_id}).
+    Uses the same lock as place/modify so all order API calls are serialized.
+    Returns dict with "message" (e.g. "delete request pushed") or "error" on failure.
+    """
+    order_id = int(order_id)
+    nubra = ensure_nubra()
+    from nubra_python_sdk.trading.trading_data import NubraTrader
+
+    trade = NubraTrader(nubra, version="V2")
+    with _NUBRA_ORDER_LOCK:
+        # SDK: cancel_order_by_id(order_id) → REST DELETE orders/{order_id}
+        result = trade.cancel_order_by_id(order_id)
+    # Normalize response to dict
+    if hasattr(result, "message"):
+        msg = getattr(result, "message", None)
+    elif isinstance(result, dict):
+        msg = result.get("message")
+    else:
+        msg = str(result) if result is not None else "delete request pushed"
+    print(f"[nubra_order] cancel_order order_id={order_id} → {msg}", flush=True)
+    return {"order_id": order_id, "message": msg, "result": result}
+
+
 if __name__ == "__main__":
-    # Minimal test: require ref_id and price (no real order unless you pass real values).
+    # Minimal test: place order or cancel by order_id.
     import sys
-    if len(sys.argv) >= 5:
+    if len(sys.argv) >= 2 and str(sys.argv[1]).strip().lower() == "cancel":
+        # Cancel: python nubra_order.py cancel <order_id>
+        if len(sys.argv) < 3:
+            print("Usage: python nubra_order.py cancel <order_id>")
+            sys.exit(1)
+        order_id = int(sys.argv[2])
+        print(f"Cancelling order_id={order_id}...")
+        r = cancel_order_nubra(order_id)
+        print("Result:", r)
+    elif len(sys.argv) >= 5:
         ref_id = int(sys.argv[1])
         side = sys.argv[2]
         qty = int(sys.argv[3])
@@ -227,5 +261,8 @@ if __name__ == "__main__":
         r = place_order_nubra(ref_id, side, qty, price_rupees)
         print("Result:", r)
     else:
-        print("Usage: python nubra_order.py <ref_id> <BUY|SELL> <qty> <price_rupees>")
-        print("Example: python nubra_order.py 1069800 BUY 600 95.50")
+        print("Usage:")
+        print("  Place:  python nubra_order.py <ref_id> <BUY|SELL> <qty> <price_rupees>")
+        print("  Cancel: python nubra_order.py cancel <order_id>")
+        print("Example place:  python nubra_order.py 1069800 BUY 600 95.50")
+        print("Example cancel: python nubra_order.py cancel 12345")

@@ -193,10 +193,23 @@ Optional env overrides: `PHASE7_KEY_NAME`, `PHASE7_LOTS`, `PHASE7_LOT_SIZE`, `PH
 **Same process (live MID for place and modify):** Run market data and executor together so the executor sees live orderbook and uses current mid on modify:
 
 ```bash
+cd nubra_oswal
 python run_phase7_with_market_data.py
 ```
 
 This starts `subscribe_orderbook` in a background thread, waits ~15s, then runs `phase7_verify` in the same process.
+
+**Testing the executor (event-driven, terminal states, missing mode):**
+
+1. **Prerequisites:** `.env` with `NUBRA_ENV`, `PHONE_NO`, `MPIN`, and optionally `NUBRA_TOTP_SECRET`. Market hours (NSE) so orders can be placed and filled/cancelled.
+2. **Run:** From `nubra_oswal`, run `python run_phase7_with_market_data.py`. It will log in (TOTP if configured), start market data, then place splices and wait for updates.
+3. **What to look for in logs:**
+   - `[executor_nubra] Order placed: order_id=...` — each splice placed.
+   - `[executor_nubra] Splice N complete: order_id=... filled=...` — normal fill.
+   - `[executor_nubra] [TERMINAL] Order ... REJECTED (...) → aborting parent` — reject (stops all further splices).
+   - `[executor_nubra] [TERMINAL] Order ... CANCELLED (...) → continuing parent` — cancel (next splice continues).
+   - `[executor_nubra] [WARN] Order ... state missing — entering missing mode` then after 15s `[FAILSAFE] Order ... missing for 15.0s → continuing parent` — missing mode (no state from socket for 15s).
+4. **Small test:** Set `PHASE7_LOTS=1` and `PHASE7_SPLICE_LOTS=1` to place a single small splice and observe fill or terminal logs.
 
 **Using Nubra from the frontend:**
 
