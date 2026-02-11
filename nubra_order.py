@@ -94,7 +94,6 @@ def place_order_nubra(
     from nubra_python_sdk.trading.trading_data import NubraTrader
 
     trade = NubraTrader(nubra, version="V2")
-    print(f"[nubra_order] create_order payload: {payload}", flush=True)
     with _NUBRA_ORDER_LOCK:
         result = trade.create_order(payload)
 
@@ -168,7 +167,6 @@ def modify_order_nubra(
     trade = NubraTrader(nubra, version="V2")
     with _NUBRA_ORDER_LOCK:
         result = trade.modify_order_v2(order_id=int(order_id), request=request)
-    print(f"[nubra_order] modify_order_v2 order_id={order_id} price_sent={order_price_rupees:.2f} rupees ({order_price_paise} paise) result={result}", flush=True)
 
     # Wait for next order_update for this order_id via WebSocket (consider order modified when socket confirms)
     from order_updates_nubra import wait_for_order_update, get_order_state
@@ -192,22 +190,7 @@ def modify_order_nubra(
             return result.get(name, default)
         return getattr(result, name, default)
 
-    if socket_confirmed and price_match:
-        print(f"[nubra_order] modify_order_v2 CONFIRMED: order_id={order_id} updated to {order_price_rupees:.2f} rupees", flush=True)
-    elif not socket_confirmed:
-        # No order_update seen within timeout – socket may be slow/disconnected or exchange delayed
-        print(
-            f"[nubra_order] modify_order_v2 WARNING: order_id={order_id} – no order_update within 10s "
-            f"(socket slow/disconnected or exchange delay)",
-            flush=True,
-        )
-    elif socket_confirmed and not price_match:
-        # Socket responded but order_price in update does not match what we sent
-        print(
-            f"[nubra_order] modify_order_v2 WARNING: order_id={order_id} – price mismatch: "
-            f"sent {order_price_rupees:.2f} rupees, socket order_price={state_px}",
-            flush=True,
-        )
+    # We intentionally do not log here to keep Nubra logs minimal; callers rely on order_state instead.
     return {
         "order_id": _get("order_id", order_id),
         "message": _get("message"),
@@ -236,33 +219,23 @@ def cancel_order_nubra(order_id: int | str) -> dict[str, Any]:
         msg = result.get("message")
     else:
         msg = str(result) if result is not None else "delete request pushed"
-    print(f"[nubra_order] cancel_order order_id={order_id} → {msg}", flush=True)
     return {"order_id": order_id, "message": msg, "result": result}
 
 
 if __name__ == "__main__":
-    # Minimal test: place order or cancel by order_id.
+    # CLI test harness intentionally left without logging to avoid noisy output in production environments.
     import sys
     if len(sys.argv) >= 2 and str(sys.argv[1]).strip().lower() == "cancel":
-        # Cancel: python nubra_order.py cancel <order_id>
         if len(sys.argv) < 3:
-            print("Usage: python nubra_order.py cancel <order_id>")
             sys.exit(1)
         order_id = int(sys.argv[2])
-        print(f"Cancelling order_id={order_id}...")
-        r = cancel_order_nubra(order_id)
-        print("Result:", r)
+        cancel_order_nubra(order_id)
     elif len(sys.argv) >= 5:
         ref_id = int(sys.argv[1])
         side = sys.argv[2]
         qty = int(sys.argv[3])
         price_rupees = float(sys.argv[4])
-        print(f"Placing {side} {qty} @ {price_rupees} (ref_id={ref_id})...")
-        r = place_order_nubra(ref_id, side, qty, price_rupees)
-        print("Result:", r)
+        place_order_nubra(ref_id, side, qty, price_rupees)
     else:
-        print("Usage:")
-        print("  Place:  python nubra_order.py <ref_id> <BUY|SELL> <qty> <price_rupees>")
-        print("  Cancel: python nubra_order.py cancel <order_id>")
-        print("Example place:  python nubra_order.py 1069800 BUY 600 95.50")
-        print("Example cancel: python nubra_order.py cancel 12345")
+        # No-op when called without enough arguments.
+        pass

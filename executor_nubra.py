@@ -77,7 +77,8 @@ def place_order_splices_mid_ltq_nubra(
               "Run subscribe_orderbook.py in the same process to populate market_data.")
         return
 
-    print(f"[executor_nubra] Starting {key_name} {side_upper} {lots} lots, splice_lots={splice_lots} phase={phase}")
+    # High-level start log (kept compact)
+    print(f"[executor_nubra] START {key_name} {side_upper} lots={lots} splice_lots={splice_lots} phase={phase}")
 
     start_order_updates_socket()
 
@@ -123,16 +124,22 @@ def place_order_splices_mid_ltq_nubra(
 
     while remaining_total > 0:
         if should_stop and should_stop():
-            print(f"[executor_nubra] should_stop=True — exiting splice loop")
+            print(f"[executor_nubra] STOP signal received — exiting splice loop")
             break
         splice_idx += 1
         if splice_idx > expected_splices:
-            print(f"[executor_nubra] FAILSAFE: splice_idx {splice_idx} > expected_splices {expected_splices}. Aborting.")
+            print(f"[executor_nubra] FAILSAFE splice_idx {splice_idx} > expected_splices {expected_splices} — aborting parent")
             break
+
+        # Compact debug: remaining vs per_splice before sizing this child
+        print(f"[executor_nubra][SPLICE] idx={splice_idx} remaining_total={remaining_total} per_splice_qty={per_splice_qty}")
 
         splice_qty = min(per_splice_qty, remaining_total)
         if splice_qty <= 0:
             break
+
+        # Debug: actual child size (units + lots)
+        print(f"[executor_nubra][SIZE] idx={splice_idx} qty={splice_qty} lots={splice_qty // lot_size} lot_size={lot_size}")
 
         # Get MID price
         work_px: Optional[float] = None
@@ -145,10 +152,10 @@ def place_order_splices_mid_ltq_nubra(
             if work_px is None:
                 time.sleep(max(0.10, poll_interval_sec))
         if work_px <= 0:
-            print(f"[executor_nubra] FAILSAFE: invalid price {work_px}. Aborting.")
+            print(f"[executor_nubra] FAILSAFE invalid price {work_px} — aborting parent")
             break
 
-        print(f"[executor_nubra] Splice {splice_idx}: {side_upper} {splice_qty} @ {work_px:.2f}")
+        print(f"[executor_nubra] CHILD idx={splice_idx} {side_upper} {splice_qty} @ {work_px:.2f}")
         resp = place_order_nubra_by_key(
             key_name,
             side_upper,
@@ -160,22 +167,23 @@ def place_order_splices_mid_ltq_nubra(
         )
         order_id = resp.get("order_id")
         if order_id is None:
-            print(f"[executor_nubra] ERROR: place_order_nubra_by_key did not return order_id: {resp}")
+            print(f"[executor_nubra] ERROR place_order_nubra_by_key missing order_id resp={resp}")
             break
         oid_key = _norm_oid(order_id)
         if oid_key is not None and oid_key in placed_orders:
-            print(f"[executor_nubra] ERROR: Duplicate order_id {order_id}. Aborting.")
+            print(f"[executor_nubra] ERROR duplicate order_id={order_id} — aborting parent")
             break
         if oid_key is not None:
             placed_orders.add(oid_key)
         if on_order_placed:
             try:
                 on_order_placed(order_id)
-            except Exception as e:
-                print(f"[executor_nubra] on_order_placed error: {e}")
+            except Exception:
+                # Callback errors shouldn't spam or break executor
+                pass
 
         update_socket_state(order_id, 0, "PENDING_LOCAL", avg_px=None)
-        print(f"[executor_nubra] Order placed: order_id={order_id} {key_name} {side_upper} qty={splice_qty} @ {work_px:.2f}")
+        print(f"[executor_nubra] PLACED order_id={order_id} idx={splice_idx} qty={splice_qty} px={work_px:.2f}")
 
         filled_this_child = 0
         next_modify_at = time.monotonic() + modify_interval_sec
@@ -195,14 +203,14 @@ def place_order_splices_mid_ltq_nubra(
                 # Missing mode: order not in order_state
                 if missing_started_at is None:
                     missing_started_at = now
-                    print(f"[executor_nubra] [WARN] Order {order_id} state missing — entering missing mode")
+                    print(f"[executor_nubra] WARN order_id={order_id} state missing — entering missing mode")
                 missing_for = now - missing_started_at
                 if missing_for >= 15.0:
-                    print(f"[executor_nubra] [FAILSAFE] Order {order_id} missing for {missing_for:.1f}s → cancelling then continuing parent")
+                    print(f"[executor_nubra] FAILSAFE order_id={order_id} missing_for={missing_for:.1f}s — cancelling and continuing parent")
                     try:
                         cancel_order_nubra(order_id)
                     except Exception as e:
-                        print(f"[executor_nubra] cancel_order_nubra({order_id}) error: {e}", flush=True)
+                        print(f"[executor_nubra] cancel_order_nubra error order_id={order_id}: {e}", flush=True)
                     break
                 continue
 
@@ -218,22 +226,27 @@ def place_order_splices_mid_ltq_nubra(
                 inc = filled_resolved - filled_this_child
                 filled_this_child = filled_resolved
                 remaining_total -= inc
+                # Key debug: how fills affect remaining_total and this child
+                print(
+                    f"[executor_nubra][FILL] order_id={order_id} idx={splice_idx} inc={inc} "
+                    f"filled_child={filled_this_child}/{splice_qty} remaining_total={remaining_total}"
+                )
                 _maybe_emit(cum_filled_parent_qty + inc, avg_px=avg_px)
 
             # Terminal: REJECTED → abort parent
             if status in ("REJECT", "REJECTED"):
-                print(f"[executor_nubra] [TERMINAL] Order {order_id} REJECTED (filled {filled_this_child}/{splice_qty}) → aborting parent")
+                print(f"[executor_nubra] TERMINAL REJECT order_id={order_id} filled={filled_this_child}/{splice_qty} — aborting parent")
                 remaining_total = 0
                 break
 
             # Terminal: CANCEL/CANCELLED/EXPIRED → continue parent
             if status in ("CANCEL", "CANCELLED", "EXPIRED"):
-                print(f"[executor_nubra] [TERMINAL] Order {order_id} {status} (filled {filled_this_child}/{splice_qty}) → continuing parent")
+                print(f"[executor_nubra] TERMINAL {status} order_id={order_id} filled={filled_this_child}/{splice_qty} — continuing parent")
                 break
 
             # Terminal: FILLED or fully filled
             if status == "FILLED" or filled_this_child >= splice_qty:
-                print(f"[executor_nubra] Splice {splice_idx} complete: order_id={order_id} filled={filled_this_child}/{splice_qty}")
+                print(f"[executor_nubra] SPLICE_COMPLETE idx={splice_idx} order_id={order_id} filled={filled_this_child}/{splice_qty}")
                 break
 
             # Periodic modify to new MID (only when mid moved > modify_min_move_rupees)
@@ -250,14 +263,15 @@ def place_order_splices_mid_ltq_nubra(
                                     modify_order_nubra(order_id, new_mid, remaining_child_qty)
                                     last_modify_price_rupees = new_mid
                                 except Exception as e:
+                                    # Single compact log to avoid spam; disable further modifies on hard errors
                                     msg = str(e)
-                                    print(f"[executor_nubra] modify_order error: {msg}", flush=True)
-                                    # If Nubra says resource already exists / cannot modify, disable further modifies for this child
+                                    print(f"[executor_nubra] modify_order error for order_id={order_id}: {msg}", flush=True)
                                     lowered = msg.lower()
                                     if "resource already exists" in lowered or "cannot modify" in lowered or "already" in lowered:
                                         modify_disabled_for_child = True
                 except Exception as e:
-                    print(f"[executor_nubra] modify_order error: {e}", flush=True)
+                    # Rare path: get_mid_price or other unexpected error
+                    print(f"[executor_nubra] modify_order unexpected error for order_id={order_id}: {e}", flush=True)
                 next_modify_at = now + modify_interval_sec
 
         if remaining_total <= 0:

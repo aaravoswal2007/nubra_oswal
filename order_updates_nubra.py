@@ -196,21 +196,13 @@ def _message_to_dict(msg: Any) -> dict[str, Any]:
 
 
 def _log_update(tag: str, msg: Any) -> None:
-    """Log full order/trade update response (all fields from OrderInfoWrapper / AckInfoWrapper)."""
-    d = _message_to_dict(msg)
-    if not d:
-        print(f"[order_updates_nubra] {tag} (empty)", flush=True)
-        return
-    lines = [f"[order_updates_nubra] {tag}"]
-    for k in sorted(d.keys()):
-        v = d[k]
-        lines.append(f"  {k}: {v}")
-    print("\n".join(lines), flush=True)
+    """No-op logging function (disabled to keep Nubra logs minimal)."""
+    return
 
 
 def _log_modify_confirmed(order_id: int, msg: Any) -> None:
-    """Log order_update only when this update is the modify confirmation for this order_id (waiter was set)."""
-    _log_update(f"Polling ended for order_id={order_id}", msg)
+    """No-op modify-confirmation logger (logging disabled)."""
+    return
 
 
 def _on_order_update(msg: Any) -> None:
@@ -224,17 +216,16 @@ def _on_trade_update(msg: Any) -> None:
 def _on_connect(msg: Any) -> None:
     global _socket_connected
     _socket_connected = True
-    print(f"[order_updates_nubra] Connected: {msg}", flush=True)
 
 
 def _on_close(reason: Any) -> None:
     global _socket_connected
     _socket_connected = False
-    print(f"[order_updates_nubra] Closed: {reason}", flush=True)
 
 
 def _on_error(err: Any) -> None:
-    print(f"[order_updates_nubra] Error: {err}", flush=True)
+    # Errors are intentionally not printed to avoid log noise; callers can expose their own hooks if needed.
+    return
 
 
 def start_order_updates_socket() -> None:
@@ -265,12 +256,12 @@ def start_order_updates_socket() -> None:
         try:
             _socket_instance.connect()
             _socket_instance.keep_running()
-        except Exception as e:
-            print(f"[order_updates_nubra] Thread error: {e}", flush=True)
+        except Exception:
+            # Swallow socket thread errors here; executor checks only connection boolean/state.
+            pass
 
     t = threading.Thread(target=_run, daemon=True)
     t.start()
-    print("[order_updates_nubra] WebSocket thread started (order/trade updates).", flush=True)
 
 
 def close_order_updates_socket() -> None:
@@ -286,14 +277,10 @@ def close_order_updates_socket() -> None:
 
 
 if __name__ == "__main__":
+    # Minimal headless run; no logging to avoid noisy output.
     start_order_updates_socket()
-    print("Order updates socket started. get_socket_state() / get_order_state(order_id) available.")
     try:
         while True:
             time.sleep(5)
-            with _order_lock:
-                n = len(order_state)
-            print(f"[order_updates_nubra] order_state size={n} connected={_socket_connected}", flush=True)
     except KeyboardInterrupt:
         close_order_updates_socket()
-        print("Stopped.")
