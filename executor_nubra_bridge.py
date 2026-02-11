@@ -29,6 +29,8 @@ def place_order_splices_mid_ltq(
     phase: str = "entry",
     on_lot_filled: Optional[Callable[[Dict[str, Any]], None]] = None,
     on_progress: Optional[Callable[[Dict[str, Any]], None]] = None,  # legacy; used if on_lot_filled is None
+    on_order_placed: Optional[Callable[[Any], None]] = None,
+    should_stop: Optional[Callable[[], bool]] = None,
 ) -> None:
     """
     Drop-in for executor_live.place_order_splices_mid_ltq_real.
@@ -46,4 +48,6 @@ def place_order_splices_mid_ltq(
         product_type=product_type,
         phase=phase,
         on_lot_filled=callback,
+        on_order_placed=on_order_placed,
+        should_stop=should_stop,
     )

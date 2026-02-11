@@ -41,6 +41,8 @@ def place_order_splices_mid_ltq_nubra(
     product_type: str = "NRML",
     phase: str = "entry",  # "entry" or "exit"
     on_lot_filled: OnLotFilled = None,
+    on_order_placed: Optional[Callable[[Any], None]] = None,
+    should_stop: Optional[Callable[[], bool]] = None,
 ) -> None:
     """
     Nubra executor (mid-peg spliced).
@@ -120,6 +122,9 @@ def place_order_splices_mid_ltq_nubra(
                     print(f"[executor_nubra] on_lot_filled error: {e}")
 
     while remaining_total > 0:
+        if should_stop and should_stop():
+            print(f"[executor_nubra] should_stop=True — exiting splice loop")
+            break
         splice_idx += 1
         if splice_idx > expected_splices:
             print(f"[executor_nubra] FAILSAFE: splice_idx {splice_idx} > expected_splices {expected_splices}. Aborting.")
@@ -163,6 +168,11 @@ def place_order_splices_mid_ltq_nubra(
             break
         if oid_key is not None:
             placed_orders.add(oid_key)
+        if on_order_placed:
+            try:
+                on_order_placed(order_id)
+            except Exception as e:
+                print(f"[executor_nubra] on_order_placed error: {e}")
 
         update_socket_state(order_id, 0, "PENDING_LOCAL", avg_px=None)
         print(f"[executor_nubra] Order placed: order_id={order_id} {key_name} {side_upper} qty={splice_qty} @ {work_px:.2f}")
@@ -171,6 +181,7 @@ def place_order_splices_mid_ltq_nubra(
         next_modify_at = time.monotonic() + modify_interval_sec
         last_modify_price_rupees: Optional[float] = work_px  # only modify when mid moves > modify_min_move_rupees
         missing_started_at: Optional[float] = None  # when order_state had no entry for this order_id
+        modify_disabled_for_child = False  # once Nubra rejects modify (e.g. order already terminal), stop further modifies
 
         while True:
             now = time.monotonic()
@@ -226,13 +237,25 @@ def place_order_splices_mid_ltq_nubra(
                 break
 
             # Periodic modify to new MID (only when mid moved > modify_min_move_rupees)
-            if modify_interval_sec > 0 and now >= next_modify_at:
+            # Skip modify when we already know this child is effectively non-modifiable
+            if modify_interval_sec > 0 and not modify_disabled_for_child and now >= next_modify_at:
                 try:
                     new_mid = get_mid_price(market_data, key_name)
                     if new_mid is not None and new_mid > 0 and last_modify_price_rupees is not None:
                         if abs(new_mid - last_modify_price_rupees) > modify_min_move_rupees:
-                            modify_order_nubra(order_id, new_mid, splice_qty)
-                            last_modify_price_rupees = new_mid
+                            # Only modify remaining quantity for this child (parity with XTS executor)
+                            remaining_child_qty = max(0, splice_qty - filled_this_child)
+                            if remaining_child_qty > 0:
+                                try:
+                                    modify_order_nubra(order_id, new_mid, remaining_child_qty)
+                                    last_modify_price_rupees = new_mid
+                                except Exception as e:
+                                    msg = str(e)
+                                    print(f"[executor_nubra] modify_order error: {msg}", flush=True)
+                                    # If Nubra says resource already exists / cannot modify, disable further modifies for this child
+                                    lowered = msg.lower()
+                                    if "resource already exists" in lowered or "cannot modify" in lowered or "already" in lowered:
+                                        modify_disabled_for_child = True
                 except Exception as e:
                     print(f"[executor_nubra] modify_order error: {e}", flush=True)
                 next_modify_at = now + modify_interval_sec
