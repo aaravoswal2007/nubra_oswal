@@ -190,11 +190,26 @@ def modify_order_nubra(
             return result.get(name, default)
         return getattr(result, name, default)
 
-    # We intentionally do not log here to keep Nubra logs minimal; callers rely on order_state instead.
+    # Derive a simple status for callers:
+    # - "ok"            : socket confirmed and broker price matches what we sent
+    # - "timeout"       : no order_update seen within timeout (socket slow / disconnect)
+    # - "price_mismatch": socket confirmed but broker price != what we sent
+    if socket_confirmed and price_match:
+        status = "ok"
+    elif not socket_confirmed:
+        status = "timeout"
+    else:
+        status = "price_mismatch"
+
     return {
         "order_id": _get("order_id", order_id),
         "message": _get("message"),
         "result": result,
+        "status": status,
+        "socket_confirmed": socket_confirmed,
+        "price_match": price_match,
+        "state_px": state_px,
+        "sent_px": order_price_rupees,
     }
 
 

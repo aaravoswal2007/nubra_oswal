@@ -69,12 +69,13 @@ def place_order_splices_mid_ltq_nubra(
     per_splice_qty = min(splice_lots * lot_size, total_qty)
     expected_splices = int(math.ceil(total_qty / per_splice_qty)) + 2  # small buffer
 
-    # Import market_data lazily
+    # Use marketdata_store.market_data (same dict subscribe_orderbook uses).
+    # Avoid importing subscribe_orderbook here so we don't pull in instruments_to_sub
+    # (which runs InitNubraSdk at import and blocks on phone/OTP/MPIN when run under Electron).
     try:
-        from subscribe_orderbook import market_data  # type: ignore
+        from marketdata_store import market_data
     except ImportError:
-        print("[executor_nubra] ERROR: Could not import market_data from subscribe_orderbook. "
-              "Run subscribe_orderbook.py in the same process to populate market_data.")
+        print("[executor_nubra] ERROR: Could not import marketdata_store.market_data.")
         return
 
     # High-level start log (kept compact)
@@ -253,15 +254,39 @@ def place_order_splices_mid_ltq_nubra(
             # Skip modify when we already know this child is effectively non-modifiable
             if modify_interval_sec > 0 and not modify_disabled_for_child and now >= next_modify_at:
                 try:
-                    new_mid = get_mid_price(market_data, key_name)
+                    new_mid = get_mid_price(market_data, key_name, current_price=last_modify_price_rupees)
                     if new_mid is not None and new_mid > 0 and last_modify_price_rupees is not None:
                         if abs(new_mid - last_modify_price_rupees) > modify_min_move_rupees:
                             # Only modify remaining quantity for this child (parity with XTS executor)
                             remaining_child_qty = max(0, splice_qty - filled_this_child)
                             if remaining_child_qty > 0:
                                 try:
-                                    modify_order_nubra(order_id, new_mid, remaining_child_qty)
-                                    last_modify_price_rupees = new_mid
+                                    mod_res = modify_order_nubra(order_id, new_mid, remaining_child_qty)
+                                    status = (mod_res or {}).get("status")
+                                    if status == "ok":
+                                        # Broker accepted modify at requested price
+                                        last_modify_price_rupees = new_mid
+                                    elif status == "timeout":
+                                        # Socket did not confirm within timeout – stop further modifies for this child
+                                        print(f"[executor_nubra] modify timeout for order_id={order_id} px={new_mid:.2f} – disabling further modifies for this child", flush=True)
+                                        modify_disabled_for_child = True
+                                    elif status == "price_mismatch":
+                                        # Broker updated to a different price; avoid chasing endlessly
+                                        state_px = mod_res.get("state_px")
+                                        print(
+                                            f"[executor_nubra] modify price mismatch for order_id={order_id}: "
+                                            f"sent={new_mid:.2f}, broker={state_px}", flush=True
+                                        )
+                                        # Use broker price as new baseline and stop modifying this child further
+                                        try:
+                                            if state_px is not None:
+                                                last_modify_price_rupees = float(state_px)
+                                        except (TypeError, ValueError):
+                                            pass
+                                        modify_disabled_for_child = True
+                                    else:
+                                        # Unknown status – be conservative and disable further modifies
+                                        modify_disabled_for_child = True
                                 except Exception as e:
                                     # Single compact log to avoid spam; disable further modifies on hard errors
                                     msg = str(e)
