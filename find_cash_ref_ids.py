@@ -21,7 +21,12 @@ def main():
     print("\n[Login] You will be prompted for OTP authentication...")
     
     # Initialize SDK - manual login
-    nubra = InitNubraSdk(NubraEnv.UAT)
+    try:
+        nubra = InitNubraSdk(NubraEnv.UAT)
+    except (TypeError, KeyError) as e:
+        if "subscriptable" in str(e).lower() or "user info" in str(e).lower() or "fetching user" in str(e).lower():
+            print("[Nubra] Known UAT issue: 'Exception while fetching user info' — userinfo can omit version_info. Auth may still have succeeded; see nubra_oswal/README.md.", flush=True)
+        raise
     print("\n✅ Authentication successful!")
     
     instruments = InstrumentData(nubra)

@@ -16,10 +16,6 @@ def save_instrument_dict_to_file(instrument_dict, folder_path="."):
     filename = f"instrument_dict_{today_str}.xlsx"
     filepath = os.path.join(folder_path, filename)
 
-    if os.path.exists(filepath):
-        print(f"File already exists for today: {filename}. Skipping save.")
-        return
-
     records = []
     for name, eid in instrument_dict.items():
         parts = name.split("_")

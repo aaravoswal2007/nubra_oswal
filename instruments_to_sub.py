@@ -46,7 +46,13 @@ print("  2. OTP (sent via SMS)")
 print("  3. MPIN")
 print("=" * 60 + "\n")
 
-nubra = InitNubraSdk(NubraEnv.UAT)
+try:
+    nubra = InitNubraSdk(NubraEnv.UAT)
+except (TypeError, KeyError) as e:
+    if "subscriptable" in str(e).lower() or "user info" in str(e).lower() or "fetching user" in str(e).lower():
+        log.warning("Known Nubra UAT issue: userinfo response can omit version_info; SDK raises during init. See README.")
+        print("[Nubra] Known UAT issue: 'Exception while fetching user info' — userinfo can omit version_info. Auth may still have succeeded; see nubra_oswal/README.md.", flush=True)
+    raise
 log.info("Initialized Nubra SDK with UAT environment")
 print("\n✅ Authentication successful!")
 

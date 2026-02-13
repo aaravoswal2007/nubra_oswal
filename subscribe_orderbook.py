@@ -51,10 +51,6 @@ log.info("Using marketdata_store.market_data")
 # Built from instrument_dict (reverse mapping)
 ref_id_to_key_name = {}
 
-# Target key_name for optional console print (parity with existing app logging)
-# Will be set to first instrument or can be configured
-TARGET_KEY_PRINT = None
-
 _message_count = 0
 _connect_count = 0
 _tick_count = 0
@@ -209,10 +205,6 @@ def main():
         log.info("Subscription list matches instrument_dict (all instruments covered)")
         print(f"[Check] OK: Subscription list matches instrument_dict ({len(dict_ref_ids)} instruments)", flush=True)
     
-    # Set TARGET_KEY_PRINT to first instrument if not set
-    if TARGET_KEY_PRINT is None and instrument_dict:
-        TARGET_KEY_PRINT = list(instrument_dict.keys())[0]
-    
     log.info(f"Loaded ref_id->key_name mapping: {len(ref_id_to_key_name)} instruments from instrument_dict")
     print(f"Loaded {len(ref_id_to_key_name)} instruments from instrument_dict")
     print(f"Total instruments to subscribe: {len(instruments_to_subscribe)}")
@@ -224,7 +216,13 @@ def main():
     print("-" * 80)
     
     # Initialize SDK - Using UAT environment per Nubra docs: https://nubra.io/products/api/docs/python-sdk/index.html
-    nubra = InitNubraSdk(NubraEnv.UAT)
+    try:
+        nubra = InitNubraSdk(NubraEnv.UAT)
+    except (TypeError, KeyError) as e:
+        if "subscriptable" in str(e).lower() or "user info" in str(e).lower() or "fetching user" in str(e).lower():
+            log.warning("Known Nubra UAT issue: userinfo response can omit version_info; SDK raises during init. See README.")
+            print("[Nubra] Known UAT issue: 'Exception while fetching user info' — userinfo can omit version_info. Auth may still have succeeded; see nubra_oswal/README.md.", flush=True)
+        raise
     log.info("Initialized Nubra SDK with UAT environment")
     
     # Initialize WebSocket — use on_orderbook_data only for orderbook ticks
